@@ -32,6 +32,7 @@ from subzero.lib.io import FileIO
 import log_helper
 from CustomContainerOriginal import MediaContainer, DeviceContainer, CastContainer, ZipObject, StatusContainer, \
     MetaContainer
+from CustomContainer import AnyContainer
 from flex_container import FlexContainer
 from lib import Plex
 
@@ -66,7 +67,7 @@ DEFAULT_CONTAINER_SIZE = 100000
 DEFAULT_CONTAINER_START = 0
 DATE_STRUCTURE = "%Y-%m-%d %H:%M:%S"
 pms_path = pms_path()
-Log.Debug("New PMS Path is '%s'" % pms_path)
+Log.Debug("New PMS Path iss '%s'" % pms_path)
 dbPath = os.path.join(pms_path, "Plug-in Support", "Databases", "com.plexapp.plugins.library.db")
 Log.Debug("Setting DB path to '%s'" % dbPath)
 os.environ['LIBRARY_DB'] = dbPath
@@ -103,6 +104,13 @@ PLUGIN_IDENTIFIER = "com.plexapp.plugins.FlexTV"
 # Start function
 def Start():
     Plugin.AddViewGroup("Details", viewMode="InfoList", mediaType="items")
+    distribution = None
+    libraries_path = os.path.join(pms_path, "Plug-ins", "FlexTV.bundle", "Contents", "Libraries")
+    loaded = insert_paths(distribution, libraries_path)
+    if loaded:
+        os.environ["Loaded"] = "True"
+    else:
+        os.environ["Loaded"] = "False"
     ObjectContainer.title1 = NAME
     DirectoryObject.thumb = R(ICON)
     HTTP.CacheTime = 5
@@ -112,13 +120,7 @@ def Start():
     ValidatePrefs()
     CacheTimer()
     RestartTimer()
-    distribution = None
-    libraries_path = os.path.join(pms_path, "Plug-ins", "Stats.bundle", "Contents", "Libraries")
-    loaded = insert_paths(distribution, libraries_path)
-    if loaded:
-        os.environ["Loaded"] = "True"
-    else:
-        os.environ["Loaded"] = "False"
+
 
 
 def CacheTimer():
@@ -143,6 +145,8 @@ def UpdateCache():
 
 @handler(PREFIX, NAME)
 @handler(PREFIX2, NAME)
+@handler(STATPREFIX, NAME)
+@handler(STATPREFIX2, NAME)
 @route(PREFIX + '/MainMenu')
 @route(PREFIX2)
 def MainMenu(Rescanned=False):
@@ -342,6 +346,7 @@ def Library():
     Log.Debug("Here's where we fetch some library stats.")
     sections = {}
     recs = query_library_stats(headers)
+    sizes = get_library_sizes()
     records = recs[0]
     sec_counts = recs[1]
     for record in records:
@@ -407,6 +412,12 @@ def Library():
             "playCount": play_count,
             "type": sec_type
         }
+
+        for sec_size in sizes:
+            if sec_size['section_id'] == sec_id:
+                Log.Debug("Found a matching section size...foo")
+                section_data['mediaSize'] = sec_size['size']
+
         sec_unique_played = sec_counts.get(str(sec_id)) or None
         if sec_unique_played is not None:
             Log.Debug("Hey, we got the unique count")
@@ -1280,6 +1291,32 @@ def build_tag_container(tag_type):
             mc.add(sc)
 
     return mc
+
+
+def get_library_sizes():
+    conn = fetch_cursor()
+    cursor = conn[0]
+    connection = conn[1]
+    results = []
+
+    if cursor is not None:
+        query = """select sum(size), library_section_id, ls.name from media_items 
+                    inner join library_sections as ls
+                    on ls.id = library_section_id
+                    group by library_section_id;"""
+
+        for size, section_id, section_name in cursor.execute(query):
+            dictz = {
+                "size": size,
+                "section_id": section_id,
+                "section_name": section_name
+            }
+            results.append(dictz)
+
+        close_connection(connection)
+
+    return results
+
 
 
 def query_tag_stats(selection, headers):
